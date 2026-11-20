@@ -48,7 +48,7 @@ func mineBlock(data string, previousHash Hash, target Target, timestamp int64) (
 			Version:      blockVersion,
 			PreviousHash: previousHash,
 			DataHash:     hashBytes([]byte(data)),
-			Target: 	  target,
+			Target:       target,
 			Timestamp:    timestamp,
 		},
 	}
@@ -76,7 +76,7 @@ func calculateNextTarget(oldTarget Target, actualSeconds int64) Target {
 	newTarget := new(big.Int).Mul(oldValue, big.NewInt(actualSeconds))
 	newTarget.Div(newTarget, big.NewInt(expectedSeconds))
 
-	minValue := new(big.Int).Add(oldValue, big.NewInt(AdjustmentFactor - 1))
+	minValue := new(big.Int).Add(oldValue, big.NewInt(AdjustmentFactor-1))
 	minValue.Div(minValue, factor)
 
 	maxValue := new(big.Int).Mul(oldValue, factor)

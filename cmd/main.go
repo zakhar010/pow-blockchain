@@ -29,8 +29,14 @@ func main() {
 		log.Printf("starting mining %s\n", data)
 		startTime := time.Now()
 
-		if err := chain.AddBlock(data, timestamp); err != nil {
-			log.Fatal(err)
+		block, err := chain.MineNextBlock(data, timestamp)
+
+		if err != nil {
+			log.Fatalf("failed to mine block %d: %v", i, err)
+		}
+
+		if err := chain.AddBlock(block); err != nil {
+			log.Fatalf("failed to add block %d: %v", i, err)
 		}
 
 		log.Printf("mined %s in %s\n", data, time.Since(startTime))

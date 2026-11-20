@@ -8,9 +8,6 @@ import (
 )
 
 const (
-    genesisData      = "Genesis Block"
-	genesisTimestamp int64 = 1767225600 // 2026-01-01 00:00:00 UTC
-
 	MaxFutureSeconds = 120
 )
 
@@ -19,17 +16,17 @@ type Chain struct {
 }
 
 func NewChain() (*Chain, error) {
-	genesis, err := mineBlock(
-        genesisData,
-        Hash{},
-        InitialTarget(),
-        genesisTimestamp,
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to mine genesis block: %w", err)
-    }
+	genesis := genesisBlock()
 
-    return &Chain{
+	if genesis.Hash() != genesisHash {
+		return nil, errors.New("invalid genesis block hash")
+	}
+
+	if !meetsTarget(genesis.Hash(), genesis.Header.Target) {
+		return nil, errors.New("genesis block does not meet target")
+	}
+
+	return &Chain{
 		blocks: []Block{genesis},
 	}, nil
 }
@@ -38,27 +35,51 @@ func (c *Chain) Blocks() []Block {
 	return slices.Clone(c.blocks)
 }
 
-func (c *Chain) AddBlock(data string, timestamp int64) error {
+func (c *Chain) MineNextBlock(data string, timestamp int64) (Block, error) {
 	if (c.blocks == nil) || len(c.blocks) == 0 {
-		return errors.New("chain is empty")
+		return Block{}, errors.New("chain is empty")
 	}
 
 	previousBlock := c.blocks[len(c.blocks)-1]
 
-    if err := validateTimestamp(previousBlock.Header.Timestamp, timestamp, time.Now().Unix()); err != nil {
-        return err
-    }
+	if err := validateTimestamp(
+		previousBlock.Header.Timestamp,
+		timestamp,
+	); err != nil {
+		return Block{}, err
+	}
 
-	target := c.RequiredTarget()
+	if err := validateFutureTimestamp(
+		timestamp,
+		time.Now().Unix(),
+	); err != nil {
+		return Block{}, err
+	}
 
-	previousHash := c.blocks[len(c.blocks)-1].Hash()
-	newBlock, err := mineBlock(data, previousHash, target, timestamp)
+	block, err := mineBlock(
+		data,
+		previousBlock.Hash(),
+		c.RequiredTarget(),
+		timestamp,
+	)
 
 	if err != nil {
-		return fmt.Errorf("failed to mine block: %v", err)
+		return Block{}, fmt.Errorf("failed to mine block: %v", err)
 	}
-	
-	c.blocks = append(c.blocks, newBlock)
+
+	return block, nil
+}
+
+func (c *Chain) AddBlock(block Block) error {
+	if len(c.blocks) == 0 {
+		return errors.New("chain is empty")
+	}
+
+	if err := c.validateNextBlock(block); err != nil {
+		return err
+	}
+
+	c.blocks = append(c.blocks, block)
 	return nil
 }
 
@@ -71,12 +92,24 @@ func (c *Chain) Validate() error {
 		return errors.New("chain is empty")
 	}
 
+	if c.blocks[0] != genesisBlock() {
+		return errors.New("invalid genesis block")
+	}
+
+	if c.blocks[0].Hash() != genesisHash {
+		return errors.New("invalid genesis block hash")
+	}
+
 	for i, block := range c.blocks {
 		if i > 0 {
-			if err := validateTimestamp(c.blocks[i-1].Header.Timestamp, block.Header.Timestamp, time.Now().Unix()); err != nil {
+			if err := validateTimestamp(
+				c.blocks[i-1].Header.Timestamp,
+				block.Header.Timestamp,
+			); err != nil {
 				return fmt.Errorf("block #%d: %w", i, err)
 			}
 		}
+
 		if block.Header.Version != blockVersion {
 			return fmt.Errorf("block №%d: unsupported version %d", i, block.Header.Version)
 		}
@@ -124,7 +157,7 @@ func (c *Chain) RequiredTarget() Target {
 		return InitialTarget()
 	}
 
-	lastBlock := c.blocks[nextHeight - 1]
+	lastBlock := c.blocks[nextHeight-1]
 
 	if ((nextHeight - 1) % RetargetInterval) != 0 {
 		return lastBlock.Header.Target
@@ -138,12 +171,62 @@ func (c *Chain) RequiredTarget() Target {
 	return calculateNextTarget(lastBlock.Header.Target, actualTimestamp)
 }
 
-func validateTimestamp(previousTimestamp, timestamp, now int64) error {
-	if timestamp <= previousTimestamp {
-		return errors.New("timestamp must be greater than previous block's timestamp")
+func (c *Chain) validateNextBlock(block Block) error {
+	previous := c.blocks[len(c.blocks)-1]
+
+	if block.Header.Version != blockVersion {
+		return fmt.Errorf("block №%d: unsupported version %d", len(c.blocks), block.Header.Version)
 	}
-	if timestamp > now + MaxFutureSeconds {
+
+	if block.Header.PreviousHash != previous.Hash() {
+		return fmt.Errorf("block №%d: invalid previous hash", len(c.blocks))
+	}
+
+	if block.Header.DataHash != hashBytes([]byte(block.Data)) {
+		return fmt.Errorf("block №%d: invalid data hash", len(c.blocks))
+	}
+
+	if err := validateTimestamp(
+		previous.Header.Timestamp,
+		block.Header.Timestamp,
+	); err != nil {
+		return err
+	}
+
+	if err := validateFutureTimestamp(
+		block.Header.Timestamp,
+		time.Now().Unix(),
+	); err != nil {
+		return err
+	}
+
+	requiredTarget := c.RequiredTarget()
+
+	if block.Header.Target != requiredTarget {
+		return fmt.Errorf("block №%d: invalid target", len(c.blocks))
+	}
+
+	if !meetsTarget(block.Hash(), block.Header.Target) {
+		return fmt.Errorf("block №%d: invalid proof of work", len(c.blocks))
+	}
+
+	return nil
+}
+
+func validateTimestamp(previous, timestamp int64) error {
+	if timestamp <= previous {
+		return errors.New(
+			"timestamp must be greater than previous block's timestamp",
+		)
+	}
+
+	return nil
+}
+
+func validateFutureTimestamp(timestamp, now int64) error {
+	if timestamp > now+MaxFutureSeconds {
 		return errors.New("timestamp is too far in the future")
 	}
+
 	return nil
 }
